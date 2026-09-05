@@ -1,4 +1,4 @@
-﻿services:
+services:
   - type: web
     name: razorgate-product-search
     env: node
@@ -9,6 +9,10 @@
     healthCheckPath: /healthz
     envVars:
       - key: SERPAPI_API_KEY
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
         sync: false
       - key: PORT
         value: 10000

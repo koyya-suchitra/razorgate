@@ -20,6 +20,14 @@ export type PaymentStatus =
   | 'BLOCKED_PRE_PAYMENT'
   | 'REJECTED';
 
+export type PaymentPhase =
+  | 'IDLE'
+  | 'CREATING_ORDER'
+  | 'OPENING_CHECKOUT'
+  | 'VERIFYING'
+  | 'SUCCESS'
+  | 'FAILED';
+
 export interface User {
   id: string;
   name: string;

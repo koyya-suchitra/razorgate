@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   X,
@@ -11,7 +11,7 @@ import {
   Lock,
   ArrowRight,
 } from 'lucide-react';
-import { useRazorGate } from '../../context/RazorGateContext';
+import { useRazorGate, PaymentPhase } from '../../context/RazorGateContext';
 
 export const RazorpayCheckoutModal: React.FC = () => {
   const navigate = useNavigate();
@@ -23,19 +23,36 @@ export const RazorpayCheckoutModal: React.FC = () => {
   } = useRazorGate();
 
   const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'CARD' | 'NETBANKING'>('UPI');
+  const [paymentPhase, setPaymentPhase] = useState<PaymentPhase>('IDLE');
 
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  // Reset payment phase when modal is opened afresh
+  useEffect(() => {
+    if (checkoutModalOpen && currentTransaction?.paymentStatus !== 'SUCCESS') {
+      setPaymentPhase('IDLE');
+    }
+  }, [checkoutModalOpen, currentTransaction?.id]);
 
   if (!checkoutModalOpen || !currentTransaction) return null;
 
+  const isProcessing =
+    paymentPhase === 'CREATING_ORDER' ||
+    paymentPhase === 'OPENING_CHECKOUT' ||
+    paymentPhase === 'VERIFYING';
+
+  const isSuccess =
+    paymentPhase === 'SUCCESS' || currentTransaction.paymentStatus === 'SUCCESS';
+
   const handlePay = async (simulateFailure = false) => {
-    setIsProcessing(true);
-    const success = await executePaymentFlow(simulateFailure);
-    setIsProcessing(false);
+    setPaymentPhase('CREATING_ORDER');
+    const success = await executePaymentFlow({
+      onPhase: (phase) => setPaymentPhase(phase),
+      simulateFailure,
+    });
+
     if (success) {
-      setPaymentSuccess(true);
+      setPaymentPhase('SUCCESS');
     } else {
+      setPaymentPhase('FAILED');
       setCheckoutModalOpen(false);
     }
   };
@@ -52,7 +69,7 @@ export const RazorpayCheckoutModal: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-bold text-sm">Razorpay Checkout</span>
-                <span className="text-[10px] font-mono px-2 py-0.2 rounded bg-blue-500/30 text-blue-200 border border-blue-400/30 uppercase">
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/30 text-blue-200 border border-blue-400/30 uppercase">
                   Test Mode
                 </span>
               </div>
@@ -63,44 +80,68 @@ export const RazorpayCheckoutModal: React.FC = () => {
           </div>
           <button
             onClick={() => setCheckoutModalOpen(false)}
-            className="p-1 rounded-md text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            disabled={isProcessing}
+            className="p-1 rounded-md text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-30"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {paymentSuccess ? (
+        {isSuccess ? (
           /* Payment Success State */
-          <div className="p-8 text-center space-y-4">
-            <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mx-auto text-emerald-600">
+          <div className="p-8 text-center space-y-4 animate-fadeIn">
+            <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mx-auto text-emerald-600 shadow-xs">
               <CheckCircle2 className="w-10 h-10" />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-slate-900">Payment Successful</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Settlement confirmed via RazorGate autonomous pipeline.
+              <h3 className="text-xl font-bold text-slate-900">Payment Successful — Test Mode</h3>
+              <div className="inline-flex items-center gap-1.5 mt-2 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Razorpay Test Mode · No real money was moved</span>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                Settlement cryptographically verified and recorded in RazorGate audit trail.
               </p>
             </div>
 
             <div className="p-4 rounded-lg bg-slate-50 border border-slate-200 text-left font-mono text-xs space-y-2">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-500">Payment ID:</span>
-                <span className="text-emerald-700 font-semibold">{currentTransaction.paymentId}</span>
+                <span className="text-emerald-700 font-semibold">
+                  {currentTransaction.paymentId || 'pay_test_' + currentTransaction.id.slice(-8)}
+                </span>
               </div>
-              <div className="flex justify-between">
+              {currentTransaction.razorpayOrderId && (
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Order ID:</span>
+                  <span className="text-slate-800 font-semibold">{currentTransaction.razorpayOrderId}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center">
                 <span className="text-slate-500">Amount Paid:</span>
                 <span className="text-slate-900 font-bold">
                   ₹{currentTransaction.finalPayable.toLocaleString('en-IN')}
                 </span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-500">Merchant:</span>
                 <span className="text-slate-700">{currentTransaction.product.merchant.name}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Traceable Signature:</span>
-                <span className="text-slate-600 truncate max-w-[200px]">
-                  {currentTransaction.razorpaySignature}
+              {currentTransaction.razorpaySignature && (
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Traceable Signature:</span>
+                  <span
+                    className="text-slate-600 truncate max-w-[200px]"
+                    title={currentTransaction.razorpaySignature}
+                  >
+                    {currentTransaction.razorpaySignature}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between items-center pt-1 border-t border-slate-200">
+                <span className="text-slate-500">Gateway Status:</span>
+                <span className="text-emerald-700 font-bold uppercase text-[10px] bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  VERIFIED (TEST MODE)
                 </span>
               </div>
             </div>
@@ -149,7 +190,7 @@ export const RazorpayCheckoutModal: React.FC = () => {
             {/* Payment Methods */}
             <div className="space-y-2">
               <div className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                Select Payment Method
+                Select Payment Method Preference
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <button
@@ -189,6 +230,9 @@ export const RazorpayCheckoutModal: React.FC = () => {
                   <span>Netbanking</span>
                 </button>
               </div>
+              <p className="text-[11px] text-slate-400 italic pt-0.5">
+                Standard Razorpay Test Checkout will open allowing selection of test UPI IDs, cards, or mock banks.
+              </p>
             </div>
 
             {/* Verification Security Notice */}
@@ -207,17 +251,27 @@ export const RazorpayCheckoutModal: React.FC = () => {
                 type="button"
                 disabled={isProcessing}
                 onClick={() => handlePay(false)}
-                className="w-full py-3 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-sm shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
+                className="w-full py-3 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-bold text-sm shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
               >
-                {isProcessing ? (
+                {paymentPhase === 'CREATING_ORDER' ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Processing Payment...</span>
+                    <span>Creating Razorpay Order...</span>
+                  </>
+                ) : paymentPhase === 'OPENING_CHECKOUT' ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Opening Razorpay Test Checkout...</span>
+                  </>
+                ) : paymentPhase === 'VERIFYING' ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Verifying Payment Signature...</span>
                   </>
                 ) : (
                   <>
                     <Lock className="w-4 h-4" />
-                    <span>Pay ₹{currentTransaction.finalPayable.toLocaleString('en-IN')}</span>
+                    <span>Pay ₹{currentTransaction.finalPayable.toLocaleString('en-IN')} (Test Mode)</span>
                   </>
                 )}
               </button>

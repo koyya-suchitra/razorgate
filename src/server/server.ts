@@ -2,6 +2,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { handleProductSearchApi } from './searchApiMiddleware.ts';
+import { handlePaymentApi } from './paymentApiMiddleware.ts';
 import { loadServerEnv } from './productSearchService.ts';
 
 loadServerEnv();
@@ -47,6 +48,11 @@ const server = http.createServer((req, res) => {
   // API Endpoints
   if (urlPath === '/api/products/search' || urlPath === '/api/product-search') {
     handleProductSearchApi(req, res);
+    return;
+  }
+
+  if (urlPath === '/api/payments/create-order' || urlPath === '/api/payments/verify') {
+    handlePaymentApi(req, res);
     return;
   }
 

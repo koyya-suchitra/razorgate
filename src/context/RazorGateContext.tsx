@@ -3,11 +3,14 @@ import {
   ActorType,
   AgentMetric,
   AuditEvent,
+  PaymentPhase,
   Policy,
   Product,
   PurchaseIntent,
   Transaction,
 } from '../lib/razorgate/types';
+
+export type { PaymentPhase };
 import { DEMO_PRODUCTS } from '../lib/razorgate/merchantsAndCatalog';
 import { DEFAULT_POLICY } from '../lib/razorgate/defaultPolicies';
 import { parseIntent } from '../lib/razorgate/intentParser';
@@ -15,7 +18,11 @@ import { searchCatalog } from '../lib/razorgate/catalogSearch';
 import { buildTransaction } from '../lib/razorgate/policyEngine';
 import { createAuditEvent, INITIAL_AUDIT_LOGS } from '../lib/razorgate/auditService';
 import { SEED_TRANSACTIONS } from '../lib/razorgate/seedTransactions';
-import { createRazorpayOrder, executeSimulatedPayment } from '../lib/razorgate/paymentService';
+import {
+  createBackendRazorpayOrder,
+  verifyBackendRazorpayPayment,
+  launchRazorpayStandardCheckout,
+} from '../lib/razorgate/paymentService';
 import { auth } from '../lib/firebase';
 import { useAuth } from './AuthContext';
 import {
@@ -74,6 +81,7 @@ interface RazorGateContextType {
   policies: Policy;
   updatePolicies: (updated: Partial<Policy>) => void;
   resetPoliciesToDefault: () => void;
+  resetAllDemoData: () => void;
 
   // Active Flow State
   currentIntent: PurchaseIntent | null;
@@ -116,9 +124,14 @@ interface RazorGateContextType {
   selectProductForGuard: (product: Product, quantity?: number) => void;
   runDemoScenario: (scenario: 'SUCCESS' | 'BLOCK' | 'HUMAN_APPROVAL') => Promise<void>;
   approvePendingTransaction: (txId: string, notes?: string) => void;
-  rejectPendingTransaction: (txId: string, reason?: string) => void;
-  executePaymentFlow: (shouldSimulateFailure?: boolean) => Promise<boolean>;
-  resetAllDemoData: () => void;
+  rejectPendingTransaction: (txId: string, notes?: string) => void;
+  executePaymentFlow: (
+    onPhaseOrOptions?:
+      | ((phase: PaymentPhase) => void)
+      | boolean
+      | { onPhase?: (phase: PaymentPhase) => void; simulateFailure?: boolean },
+    maybeSimulate?: boolean
+  ) => Promise<boolean>;
   addProductToCatalog: (product: Product) => void;
   addAuditLog: (
     eventName: string,
@@ -637,11 +650,30 @@ export const RazorGateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   /**
-   * Execute Payment Flow (Razorpay Test Mode or Simulation)
+   * Execute Payment Flow (Razorpay Test Mode with backend order creation & signature verification)
    * Deterministically enforces that BLOCKED transactions CANNOT be executed!
    */
-  const executePaymentFlow = async (shouldSimulateFailure = false): Promise<boolean> => {
+  const executePaymentFlow = async (
+    onPhaseOrOptions?:
+      | ((phase: PaymentPhase) => void)
+      | boolean
+      | { onPhase?: (phase: PaymentPhase) => void; simulateFailure?: boolean },
+    maybeSimulate?: boolean
+  ): Promise<boolean> => {
     if (!currentTransaction) return false;
+
+    let onPaymentPhaseChange: ((phase: PaymentPhase) => void) | undefined;
+    let simulateFailure = false;
+
+    if (typeof onPhaseOrOptions === 'function') {
+      onPaymentPhaseChange = onPhaseOrOptions;
+      simulateFailure = !!maybeSimulate;
+    } else if (typeof onPhaseOrOptions === 'boolean') {
+      simulateFailure = onPhaseOrOptions;
+    } else if (onPhaseOrOptions && typeof onPhaseOrOptions === 'object') {
+      onPaymentPhaseChange = onPhaseOrOptions.onPhase;
+      simulateFailure = !!onPhaseOrOptions.simulateFailure;
+    }
 
     // Safety enforcement: Blocked transactions must never call payment execution!
     if (currentTransaction.decision === 'BLOCKED') {
@@ -666,71 +698,13 @@ export const RazorGateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return false;
     }
 
-    // Step 1: Create Payment Order
-    addAuditLog(
-      'Payment Order Created',
-      'RAZORPAY_GATEWAY',
-      'INFO',
-      `Creating payment order for ₹${currentTransaction.finalPayable.toLocaleString('en-IN')}`,
-      currentTransaction.id
-    );
-
-    const rzpOrder = await createRazorpayOrder(currentTransaction);
-
-    const initiatedTx: Transaction = {
-      ...currentTransaction,
-      razorpayOrderId: rzpOrder.id,
-      paymentStatus: 'INITIATED',
-      updatedAt: new Date().toISOString(),
-    };
-    setCurrentTransaction(initiatedTx);
-
-    // Step 2: Execute Payment
-    addAuditLog(
-      'Payment Authorized',
-      'RAZORPAY_GATEWAY',
-      'INFO',
-      `Processing order ${rzpOrder.id} via payment execution layer.`,
-      currentTransaction.id
-    );
-
-    const result = await executeSimulatedPayment(
-      rzpOrder.id,
-      currentTransaction.finalPayable,
-      'AUTONOMOUS_GATEWAY',
-      shouldSimulateFailure
-    );
-
-    if (result.success && result.paymentId) {
-      const successTx: Transaction = {
-        ...initiatedTx,
-        paymentStatus: 'SUCCESS',
-        paymentId: result.paymentId,
-        razorpaySignature: result.signature,
-        updatedAt: new Date().toISOString(),
-      };
-
-      setCurrentTransaction(successTx);
-      setTransactions((prev) => prev.map((t) => (t.id === successTx.id ? successTx : t)));
-      const uid = auth.currentUser?.uid;
-      if (uid) fsUpdateTransaction(uid, successTx.id, successTx).catch(() => {});
-
-      addAuditLog(
-        'Payment Completed',
-        'RAZORPAY_GATEWAY',
-        'SUCCESS',
-        `Payment successful: Ref #${result.paymentId}. Transaction settled.`,
-        currentTransaction.id,
-        { paymentId: result.paymentId, signature: result.signature, orderId: result.orderId }
-      );
-
-      return true;
-    } else {
-      // Payment failed
+    if (simulateFailure) {
+      onPaymentPhaseChange?.('CREATING_ORDER');
+      await new Promise((r) => setTimeout(r, 600));
       const failTx: Transaction = {
-        ...initiatedTx,
+        ...currentTransaction,
         paymentStatus: 'FAILED',
-        paymentFailureReason: result.error?.description || 'Payment declined by bank.',
+        paymentFailureReason: 'Bank gateway route declined payment authorization test.',
         updatedAt: new Date().toISOString(),
       };
 
@@ -740,14 +714,13 @@ export const RazorGateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (uid) fsUpdateTransaction(uid, failTx.id, failTx).catch(() => {});
 
       addAuditLog(
-        'Payment Failed',
+        'Payment Order Failed',
         'RAZORPAY_GATEWAY',
         'FAILED',
-        `Payment failed: ${result.error?.description}`,
+        'Payment simulation declined: Bank gateway route rejected test charge.',
         currentTransaction.id,
-        result.error
+        { error: 'Simulated bank gateway decline' }
       );
-
       addAuditLog(
         'Duplicate Prevention Active',
         'TRANSACTION_GUARD',
@@ -755,7 +728,6 @@ export const RazorGateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         'Idempotency lock verified. Duplicate charge prevented.',
         currentTransaction.id
       );
-
       addAuditLog(
         'Transaction Safely Closed',
         'POLICY_ENGINE',
@@ -763,7 +735,6 @@ export const RazorGateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         'Transaction marked NOT COMPLETED. No retry without user authorization.',
         currentTransaction.id
       );
-
       addAuditLog(
         'User Notified',
         'AI_BUYER',
@@ -772,9 +743,212 @@ export const RazorGateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         currentTransaction.id
       );
 
+      onPaymentPhaseChange?.('FAILED');
       setFailureReportModalOpen(true);
       return false;
     }
+
+    onPaymentPhaseChange?.('CREATING_ORDER');
+
+    addAuditLog(
+      'Payment Order Initiated',
+      'RAZORPAY_GATEWAY',
+      'INFO',
+      `Creating Razorpay Test Mode order for ₹${currentTransaction.finalPayable.toLocaleString('en-IN')}`,
+      currentTransaction.id
+    );
+
+    // Step 1: Call Render backend to create real Razorpay Test Mode order
+    const orderRes = await createBackendRazorpayOrder(currentTransaction);
+
+    if (!orderRes.success || !orderRes.orderId || !orderRes.keyId) {
+      const errReason = orderRes.error || 'Failed to create order on Razorpay Test Mode gateway.';
+      const failTx: Transaction = {
+        ...currentTransaction,
+        paymentStatus: 'FAILED',
+        paymentFailureReason: errReason,
+        updatedAt: new Date().toISOString(),
+      };
+
+      setCurrentTransaction(failTx);
+      setTransactions((prev) => prev.map((t) => (t.id === failTx.id ? failTx : t)));
+      const uid = auth.currentUser?.uid;
+      if (uid) fsUpdateTransaction(uid, failTx.id, failTx).catch(() => {});
+
+      addAuditLog(
+        'Payment Order Failed',
+        'RAZORPAY_GATEWAY',
+        'FAILED',
+        `Razorpay order creation failed: ${errReason}`,
+        currentTransaction.id,
+        { error: errReason, code: orderRes.code }
+      );
+
+      onPaymentPhaseChange?.('FAILED');
+      setFailureReportModalOpen(true);
+      return false;
+    }
+
+    const initiatedTx: Transaction = {
+      ...currentTransaction,
+      razorpayOrderId: orderRes.orderId,
+      paymentStatus: 'INITIATED',
+      updatedAt: new Date().toISOString(),
+    };
+    setCurrentTransaction(initiatedTx);
+    setTransactions((prev) => prev.map((t) => (t.id === initiatedTx.id ? initiatedTx : t)));
+    const uid = auth.currentUser?.uid;
+    if (uid) fsUpdateTransaction(uid, initiatedTx.id, initiatedTx).catch(() => {});
+
+    addAuditLog(
+      'Razorpay Order Created',
+      'RAZORPAY_GATEWAY',
+      'INFO',
+      `Order ${orderRes.orderId} created on Razorpay Test Mode. Launching Standard Checkout.`,
+      currentTransaction.id,
+      { orderId: orderRes.orderId, keyId: orderRes.keyId }
+    );
+
+    onPaymentPhaseChange?.('OPENING_CHECKOUT');
+
+    // Step 2: Launch Razorpay Standard Checkout in browser
+    return new Promise<boolean>((resolve) => {
+      launchRazorpayStandardCheckout({
+        keyId: orderRes.keyId!,
+        orderId: orderRes.orderId!,
+        amount: orderRes.amount || currentTransaction.finalPayable * 100,
+        currency: orderRes.currency || 'INR',
+        productName: currentTransaction.product.name,
+        merchantName: currentTransaction.product.merchant.name,
+        userEmail: auth.currentUser?.email || undefined,
+        userName: auth.currentUser?.displayName || undefined,
+        transactionId: currentTransaction.id,
+        onSuccess: async (payResult) => {
+          onPaymentPhaseChange?.('VERIFYING');
+
+          addAuditLog(
+            'Payment Signature Received',
+            'RAZORPAY_GATEWAY',
+            'INFO',
+            `Received payment signature for ${payResult.razorpay_payment_id}. Verifying with Render server.`,
+            currentTransaction.id,
+            { paymentId: payResult.razorpay_payment_id, orderId: payResult.razorpay_order_id }
+          );
+
+          // Step 3: Server-side cryptographic signature verification
+          const verifyRes = await verifyBackendRazorpayPayment(payResult);
+
+          if (verifyRes.success && verifyRes.verified) {
+            const successTx: Transaction = {
+              ...initiatedTx,
+              paymentStatus: 'SUCCESS',
+              paymentId: payResult.razorpay_payment_id,
+              razorpaySignature: payResult.razorpay_signature,
+              updatedAt: new Date().toISOString(),
+            };
+
+            setCurrentTransaction(successTx);
+            setTransactions((prev) => prev.map((t) => (t.id === successTx.id ? successTx : t)));
+            if (uid) fsUpdateTransaction(uid, successTx.id, successTx).catch(() => {});
+
+            addAuditLog(
+              'Payment Verified (Test Mode)',
+              'RAZORPAY_GATEWAY',
+              'SUCCESS',
+              `Payment verified: Ref #${payResult.razorpay_payment_id}. Test Mode: No real money was moved.`,
+              currentTransaction.id,
+              {
+                paymentId: payResult.razorpay_payment_id,
+                orderId: payResult.razorpay_order_id,
+                signature: payResult.razorpay_signature,
+                verified: true,
+                mode: 'TEST_MODE',
+              }
+            );
+
+            onPaymentPhaseChange?.('SUCCESS');
+            resolve(true);
+          } else {
+            const verifyErr = verifyRes.error || 'Server rejected payment signature verification.';
+            const failTx: Transaction = {
+              ...initiatedTx,
+              paymentStatus: 'FAILED',
+              paymentFailureReason: verifyErr,
+              updatedAt: new Date().toISOString(),
+            };
+
+            setCurrentTransaction(failTx);
+            setTransactions((prev) => prev.map((t) => (t.id === failTx.id ? failTx : t)));
+            if (uid) fsUpdateTransaction(uid, failTx.id, failTx).catch(() => {});
+
+            addAuditLog(
+              'Payment Verification Failed',
+              'RAZORPAY_GATEWAY',
+              'FAILED',
+              `Signature verification failed: ${verifyErr}`,
+              currentTransaction.id,
+              { error: verifyErr }
+            );
+
+            onPaymentPhaseChange?.('FAILED');
+            setFailureReportModalOpen(true);
+            resolve(false);
+          }
+        },
+        onFailure: (payErr) => {
+          const failTx: Transaction = {
+            ...initiatedTx,
+            paymentStatus: 'FAILED',
+            paymentFailureReason: payErr.description || 'Payment was declined by Razorpay gateway.',
+            updatedAt: new Date().toISOString(),
+          };
+
+          setCurrentTransaction(failTx);
+          setTransactions((prev) => prev.map((t) => (t.id === failTx.id ? failTx : t)));
+          if (uid) fsUpdateTransaction(uid, failTx.id, failTx).catch(() => {});
+
+          addAuditLog(
+            'Payment Gateway Declined',
+            'RAZORPAY_GATEWAY',
+            'FAILED',
+            `Gateway declined payment: ${payErr.description} (Code: ${payErr.code})`,
+            currentTransaction.id,
+            payErr
+          );
+
+          addAuditLog(
+            'Duplicate Prevention Active',
+            'TRANSACTION_GUARD',
+            'SUCCESS',
+            'Idempotency lock verified. Duplicate charge prevented.',
+            currentTransaction.id
+          );
+
+          addAuditLog(
+            'Transaction Safely Closed',
+            'POLICY_ENGINE',
+            'INFO',
+            'Transaction marked NOT COMPLETED. No retry without user authorization.',
+            currentTransaction.id
+          );
+
+          onPaymentPhaseChange?.('FAILED');
+          setFailureReportModalOpen(true);
+          resolve(false);
+        },
+        onDismiss: () => {
+          addAuditLog(
+            'Payment Checkout Dismissed',
+            'HUMAN_ADMIN',
+            'INFO',
+            'User closed Razorpay checkout popup without completing payment.',
+            currentTransaction.id
+          );
+          onPaymentPhaseChange?.('FAILED');
+          resolve(false);
+        },
+      });
+    });
   };
 
   const addProductToCatalog = (product: Product) => {
