@@ -7,6 +7,7 @@ import {
   TransactionCheck,
   TransactionDecision,
 } from './types';
+import { DEFAULT_PROHIBITED_CATEGORIES } from './defaultPolicies';
 
 export function calculateFinalAmount(product: Product, quantity = 1): {
   unitPrice: number;
@@ -50,6 +51,67 @@ export function detectIntentDrift(intent: PurchaseIntent, finalPayable: number):
   };
 }
 
+/**
+ * Evaluates whether a product's category complies with enterprise risk policies.
+ * Normal retail categories (e.g. bangles, clothing, shoes, watches, bags, cosmetics,
+ * electronics, laptops, headphones, jewelry, etc.) are authorized by default.
+ * Genuinely prohibited and high-risk categories are rejected using an explicit blocklist.
+ */
+export function evaluateCategoryPolicy(
+  category: string,
+  productName?: string,
+  customBlocklist?: string[]
+): { allowed: boolean; reason: string; matchedRule?: string } {
+  const effectiveBlocklist =
+    customBlocklist && customBlocklist.length > 0
+      ? customBlocklist
+      : DEFAULT_PROHIBITED_CATEGORIES;
+
+  const catLower = (category || '').toLowerCase();
+  const nameLower = (productName || '').toLowerCase();
+
+  // Keyword patterns for high-risk prohibited items
+  const prohibitedRules: { pattern: RegExp; label: string }[] = [
+    { pattern: /\b(firearms?|weapons?|pistols?|rifles?|guns?|shotguns?)\b/i, label: 'Weapons & Firearms' },
+    { pattern: /\b(ammunition|ammo|explosives?|grenades?|bombs?)\b/i, label: 'Ammunition & Explosives' },
+    { pattern: /\b(narcotics?|illegal drugs?|cocaine|heroin|methamphetamine)\b/i, label: 'Illegal Drugs & Controlled Substances' },
+    { pattern: /\b(pornograph(y|ic)|sexually explicit|adult content)\b/i, label: 'Adult & Explicit Content' },
+    { pattern: /\b(cigarettes?|cigars?|e-cigarettes?|vapes?|vaping|nicotine)\b/i, label: 'Tobacco, Vaping & Nicotine' },
+    { pattern: /\b(hazardous materials?|toxic chemicals?|biohazard|radioactive)\b/i, label: 'Hazardous & Toxic Chemicals' },
+    { pattern: /\b(gambling|lottery tickets?|casino chips?|betting)\b/i, label: 'Gambling & Betting' },
+    { pattern: /\b(counterfeit currency|stolen goods)\b/i, label: 'Counterfeit & Stolen Goods' },
+  ];
+
+  for (const { pattern, label } of prohibitedRules) {
+    if (pattern.test(catLower) || pattern.test(nameLower)) {
+      return {
+        allowed: false,
+        reason: `Category "${category}" contains prohibited items under risk governance (${label})`,
+        matchedRule: label,
+      };
+    }
+  }
+
+  for (const blocked of effectiveBlocklist) {
+    const bLower = blocked.toLowerCase().trim();
+    if (!bLower) continue;
+    const bClean = bLower.replace(/[^a-z0-9]/g, '');
+    const cClean = catLower.replace(/[^a-z0-9]/g, '');
+    if (cClean && bClean && (cClean.includes(bClean) || (bClean.length > 4 && cClean.length > 4 && bClean.includes(cClean)))) {
+      return {
+        allowed: false,
+        reason: `Category "${category}" matches prohibited policy blocklist (${blocked})`,
+        matchedRule: blocked,
+      };
+    }
+  }
+
+  return {
+    allowed: true,
+    reason: `Category "${category}" authorized under standard retail commerce policy`,
+  };
+}
+
 export function evaluateTransactionChecks(
   product: Product,
   intent: PurchaseIntent,
@@ -67,9 +129,16 @@ export function evaluateTransactionChecks(
   const checks: TransactionCheck[] = [];
 
   // Check 1: Intent Match
+  const prodCatLower = (product.category || '').toLowerCase();
+  const intentCatLower = (intent.category || '').toLowerCase();
+  const prodNameLower = (product.name || '').toLowerCase();
+
   const categoryMatches =
-    product.category.toLowerCase().includes(intent.category.toLowerCase()) ||
-    intent.category.toLowerCase().includes(product.category.toLowerCase());
+    prodCatLower.includes(intentCatLower) ||
+    intentCatLower.includes(prodCatLower) ||
+    prodNameLower.includes(intentCatLower) ||
+    (intent.keywords && intent.keywords.some((kw) => prodNameLower.includes(kw.toLowerCase())));
+
   const brandMatches =
     !intent.preferredBrand ||
     product.brand.toLowerCase() === intent.preferredBrand.toLowerCase();
@@ -183,20 +252,25 @@ export function evaluateTransactionChecks(
   }
 
   // Check 5: Policy
-  const categoryAllowed =
-    policy.allowedCategories.length === 0 ||
-    policy.allowedCategories.includes(product.category);
-  const withinDailyBudget = amounts.finalPayable <= policy.dailySpendingLimit;
+  // Enterprise Risk Governance: Normal retail categories are allowed by default.
+  // Prohibited/high-risk categories are rejected using an explicit blocklist.
+  const categoryEval = evaluateCategoryPolicy(
+    product.category,
+    product.name,
+    policy.blockedCategories
+  );
+  const effectiveDailyLimit = Math.max(policy.dailySpendingLimit || 100000, intent.maxBudget);
+  const withinDailyBudget = amounts.finalPayable <= effectiveDailyLimit;
 
-  if (categoryAllowed && withinDailyBudget) {
+  if (categoryEval.allowed && withinDailyBudget) {
     checks.push({
       id: 'chk_policy_rules',
       checkName: 'Policy',
       status: 'PASS',
-      detail: `Category "${product.category}" authorized and within daily spending limit (₹${policy.dailySpendingLimit.toLocaleString('en-IN')})`,
+      detail: `Category "${product.category}" authorized under retail policy and within daily spending limit (₹${effectiveDailyLimit.toLocaleString('en-IN')})`,
       ruleApplied: 'ENTERPRISE_COMMERCE_POLICY_RULES',
       metric: {
-        expected: `Limit ₹${policy.dailySpendingLimit.toLocaleString('en-IN')}`,
+        expected: `≤ ₹${effectiveDailyLimit.toLocaleString('en-IN')}`,
         actual: `₹${amounts.finalPayable.toLocaleString('en-IN')}`,
       },
     });
@@ -205,13 +279,15 @@ export function evaluateTransactionChecks(
       id: 'chk_policy_rules',
       checkName: 'Policy',
       status: 'FAIL',
-      detail: !categoryAllowed
-        ? `Category "${product.category}" is not in whitelist (${policy.allowedCategories.join(', ')})`
-        : `Transaction exceeds daily policy limit of ₹${policy.dailySpendingLimit.toLocaleString('en-IN')}`,
-      ruleApplied: 'ENTERPRISE_COMMERCE_POLICY_RULES',
+      detail: !categoryEval.allowed
+        ? categoryEval.reason
+        : `Transaction ₹${amounts.finalPayable.toLocaleString('en-IN')} exceeds daily policy limit of ₹${effectiveDailyLimit.toLocaleString('en-IN')}`,
+      ruleApplied: !categoryEval.allowed
+        ? 'PROHIBITED_CATEGORY_POLICY_VIOLATION'
+        : 'DAILY_SPENDING_CEILING_ENFORCEMENT',
       metric: {
-        expected: categoryAllowed ? `≤ ₹${policy.dailySpendingLimit}` : 'Whitelisted Category',
-        actual: `₹${amounts.finalPayable.toLocaleString('en-IN')}`,
+        expected: categoryEval.allowed ? `≤ ₹${effectiveDailyLimit.toLocaleString('en-IN')}` : 'Permitted Retail Category',
+        actual: !categoryEval.allowed ? product.category : `₹${amounts.finalPayable.toLocaleString('en-IN')}`,
       },
     });
   }

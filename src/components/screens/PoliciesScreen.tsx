@@ -9,6 +9,7 @@ import {
   Scale,
 } from 'lucide-react';
 import { useRazorGate } from '../../context/RazorGateContext';
+import { DEFAULT_PROHIBITED_CATEGORIES } from '../../lib/razorgate/defaultPolicies';
 
 export const PoliciesScreen: React.FC = () => {
   const { policies, updatePolicies, resetPoliciesToDefault } = useRazorGate();
@@ -23,22 +24,17 @@ export const PoliciesScreen: React.FC = () => {
   );
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const availableCategories = [
-    'Wireless Headphones',
-    'Electronics',
-    'Digital Imaging',
-    'Footwear',
-    'Laptops',
-    'Audio Equipment',
-  ];
+  const [blockedCats, setBlockedCats] = useState<string[]>(
+    policies.blockedCategories && policies.blockedCategories.length > 0
+      ? policies.blockedCategories
+      : DEFAULT_PROHIBITED_CATEGORIES
+  );
 
-  const [selectedCats, setSelectedCats] = useState<string[]>(policies.allowedCategories);
-
-  const toggleCategory = (cat: string) => {
-    if (selectedCats.includes(cat)) {
-      setSelectedCats(selectedCats.filter((c) => c !== cat));
+  const toggleBlockedCategory = (cat: string) => {
+    if (blockedCats.includes(cat)) {
+      setBlockedCats(blockedCats.filter((c) => c !== cat));
     } else {
-      setSelectedCats([...selectedCats, cat]);
+      setBlockedCats([...blockedCats, cat]);
     }
   };
 
@@ -49,7 +45,8 @@ export const PoliciesScreen: React.FC = () => {
       dailySpendingLimit,
       humanApprovalThreshold,
       requireVerifiedMerchant,
-      allowedCategories: selectedCats,
+      allowedCategories: [],
+      blockedCategories: blockedCats,
     });
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 3000);
@@ -174,38 +171,48 @@ export const PoliciesScreen: React.FC = () => {
           </div>
         </div>
 
-        {/* Section 3: ALLOWED CATEGORIES */}
+        {/* Section 3: CATEGORY GOVERNANCE & PROHIBITED BLOCKLIST */}
         <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-card space-y-4">
-          <div className="border-b border-slate-100 pb-3">
+          <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-purple-600" />
-              Allowed Categories
+              Category Governance
             </h3>
+            <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+              Retail Categories Allowed by Default
+            </span>
           </div>
 
           <p className="text-xs text-slate-500">
-            Specify which commercial categories your AI buyer is authorized to purchase.
+            Normal retail categories (such as Bangles, Clothing, Footwear, Watches, Bags, Jewelry, Laptops, Electronics, and Cosmetics) are authorized by default. Genuinely prohibited and high-risk categories below are strictly blocked:
           </p>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
-            {availableCategories.map((cat) => {
-              const isSelected = selectedCats.includes(cat);
+            {DEFAULT_PROHIBITED_CATEGORIES.map((cat) => {
+              const isBlocked = blockedCats.includes(cat);
               return (
                 <button
                   type="button"
                   key={cat}
-                  onClick={() => toggleCategory(cat)}
+                  onClick={() => toggleBlockedCategory(cat)}
                   className={`p-3 rounded-lg text-xs font-medium flex items-center justify-between border transition-colors cursor-pointer ${
-                    isSelected
-                      ? 'bg-blue-50/70 text-blue-900 border-blue-300'
-                      : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                    isBlocked
+                      ? 'bg-rose-50/80 text-rose-900 border-rose-200'
+                      : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
                   }`}
                 >
-                  <span>{cat}</span>
-                  {isSelected && <Check className="w-4 h-4 text-blue-600" />}
+                  <span className="truncate pr-1">{cat}</span>
+                  {isBlocked && (
+                    <span className="text-[10px] font-bold text-rose-700 bg-rose-100/80 px-1.5 py-0.2 rounded shrink-0">
+                      BLOCKED
+                    </span>
+                  )}
                 </button>
               );
             })}
+          </div>
+          <div className="text-[11px] text-slate-400 pt-1">
+            Toggle high-risk categories to customize risk policies for your autonomous AI buyer.
           </div>
         </div>
 

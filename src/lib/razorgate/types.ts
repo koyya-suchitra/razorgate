@@ -147,6 +147,7 @@ export interface Policy {
   humanApprovalThreshold: number; // Default: ₹10,000
   requireVerifiedMerchant: boolean; // Default: true
   allowedCategories: string[];
+  blockedCategories?: string[];
   maxIntentDriftPercentage: number; // Default: 0% (strict budget)
   updatedAt: string;
 }
