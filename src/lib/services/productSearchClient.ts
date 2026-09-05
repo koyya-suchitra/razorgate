@@ -21,7 +21,11 @@ export async function searchShoppingCatalog(
 ): Promise<SearchProductsResult> {
   const queryPayload = buildShoppingSearchQuery(intent);
 
-  const apiBase = (import.meta.env.VITE_RENDER_API_URL || import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  const apiBase = (
+    import.meta.env.VITE_RENDER_API_URL ||
+    import.meta.env.VITE_API_URL ||
+    'https://razorgate-product-search.onrender.com'
+  ).replace(/\/$/, '');
   const endpoint = `${apiBase}/api/products/search`;
 
   try {
@@ -38,7 +42,7 @@ export async function searchShoppingCatalog(
 
     const contentType = response.headers.get('content-type') || '';
 
-    // If server returned HTML (e.g. Firebase Hosting static index.html or 404 page)
+    // If server returned HTML (e.g. static index.html or 404 page)
     if (!contentType.includes('application/json')) {
       const textSnippet = (await response.text().catch(() => '')).substring(0, 150);
       console.error('[ProductSearchClient] Expected JSON but received:', response.status, contentType, textSnippet);
@@ -46,7 +50,7 @@ export async function searchShoppingCatalog(
         success: false,
         products: [],
         count: 0,
-        error: `Production backend endpoint returned HTTP ${response.status} (${contentType.split(';')[0]}). The Cloud Function backend is not reachable.`,
+        error: `Production backend endpoint returned HTTP ${response.status} (${contentType.split(';')[0]}). The Render backend is not reachable.`,
         code: 'BACKEND_NOT_REACHABLE',
         source: 'Google Shopping',
       };
@@ -62,7 +66,7 @@ export async function searchShoppingCatalog(
         error:
           data?.error ||
           (response.status === 503
-            ? 'Real product search is temporarily unavailable. Please check the shopping search API configuration (SERPAPI_API_KEY).'
+            ? 'Real product search is temporarily unavailable. Please check the shopping search API configuration.'
             : `Search failed with status ${response.status}.`),
         code: data?.code || 'SERVER_ERROR',
         source: 'Google Shopping',
