@@ -16,8 +16,6 @@
 > **From natural-language intent to a verified payment — without giving the AI direct payment authority.**
 
 <!-- Replace this with your uploaded demo GIF/video -->
-![RazorGate Demo](<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/87196735-8786-4512-ad99-a24c8c37a7fa" />
-)
 
 ### The 60-second experience
 
