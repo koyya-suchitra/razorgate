@@ -1,16 +1,52 @@
 # RazorGate — AI Commerce Gateway
 
 > **Where AI intent becomes trusted transactions.**
+> **RazorGate is a safety and authorization layer for agentic commerce — allowing AI to discover products and prepare purchases, while deterministic policies decide whether money can actually move.**
+
+<p align="center">
 
 ### Live Demo: **[Open RazorGate Live](https://razorgate-demo.web.app/)**
 
-Built for the **Razorpay AI Buildathon — Track 01: AI Growth & Agentic Commerce**
+**AI Discovery → Transaction Guard → Human Approval → Razorpay Test Payment → Cryptographic Verification → Audit Trail**
 
-RazorGate is an AI-native commerce control layer that allows AI agents to discover products and prepare purchases while ensuring that **AI cannot execute a transaction outside the user's authorized intent and policies**.
+</p>
 
-### Core Principle
+## 🎬 See RazorGate in Action
 
-> **AI recommends. Policy controls. Humans approve sensitive actions. Razorpay executes. Audit records everything.**
+> **From natural-language intent to a verified payment — without giving the AI direct payment authority.**
+
+<!-- Replace this with your uploaded demo GIF/video -->
+![RazorGate Demo](<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/87196735-8786-4512-ad99-a24c8c37a7fa" />
+)
+
+### The 60-second experience
+
+```text
+"Find me wireless headphones under ₹2,000"
+                    ↓
+            🤖 AI Buyer
+                    ↓
+       🔎 LIVE PRODUCT DISCOVERY
+          SerpApi → Google Shopping
+                    ↓
+          🛡️ TRANSACTION GUARD
+       ┌─────────────────────────┐
+       │ Intent Match       ✓    │
+       │ Merchant Trust     ✓    │
+       │ Availability       ✓    │
+       │ Budget Boundary    ✓    │
+       │ Policy Compliance  ✓    │
+       │ Payment Authority  ✓    │
+       └─────────────────────────┘
+                    ↓
+       👤 HUMAN APPROVAL
+          when required
+                    ↓
+       💳 RAZORPAY TEST MODE
+                    ↓
+       🔐 HMAC-SHA256 VERIFY
+                    ↓
+       🧾 COMPLETE AUDIT TRAIL
 
 ---
 
