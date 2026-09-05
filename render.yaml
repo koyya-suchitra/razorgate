@@ -1,0 +1,18 @@
+﻿services:
+  - type: web
+    name: razorgate-product-search
+    env: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm run start
+    healthCheckPath: /healthz
+    envVars:
+      - key: SERPAPI_API_KEY
+        sync: false
+      - key: PORT
+        value: 10000
+      - key: PRODUCT_SEARCH_MODE
+        value: real
+      - key: NODE_VERSION
+        value: 22
