@@ -47,7 +47,7 @@
        🔐 HMAC-SHA256 VERIFY
                     ↓
        🧾 COMPLETE AUDIT TRAIL
-
+```
 ---
 
 ## 🎯 The Problem
