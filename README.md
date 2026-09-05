@@ -2,7 +2,7 @@
 
 > **Where AI intent becomes trusted transactions.**
 
-### Live Demo: **[🔗 Open RazorGate Live](https://razorgate-demo.web.app/)**
+### Live Demo: **[Open RazorGate Live](https://razorgate-demo.web.app/)**
 
 Built for the **Razorpay AI Buildathon — Track 01: AI Growth & Agentic Commerce**
 
